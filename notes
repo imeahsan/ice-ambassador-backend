@@ -1,0 +1,2 @@
+// command to clear deliveries in db
+ EVAL "for _,k in ipairs(redis.call('keys','delivery:*')) do redis.call('del',k) end" 0
