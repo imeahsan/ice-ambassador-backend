@@ -8,6 +8,10 @@
       {
         "include": "**/*.lua",
         "outDir": "dist"
+      },
+      {
+        "include": "**/*.hbs",
+        "outDir": "dist"
       }
     ]
   },

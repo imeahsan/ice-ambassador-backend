@@ -47,8 +47,8 @@ async function bootstrap() {
     app.useGlobalFilters(new GlobalExceptionFilter());
     app.use(morgan('combined')); // or 'combined', 'dev'
 
-    await app.listen(3700);
-    console.log('Server running on http://localhost:3700');
+    await app.listen(3701);
+    console.log('Server running on http://localhost:3701');
 }
 
 bootstrap();

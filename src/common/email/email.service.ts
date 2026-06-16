@@ -15,6 +15,10 @@ export class EmailService {
     private readonly logger = new Logger(EmailService.name);
     private readonly templates: Map<string, Handlebars.TemplateDelegate> = new Map();
     private readonly sender: string;
+    private readonly templateDirectories = [
+        path.join(process.cwd(), 'dist', 'common', 'email', 'templates'),
+        path.join(process.cwd(), 'src', 'common', 'email', 'templates'),
+    ];
 
     constructor() {
         this.ses = new SESClient({
@@ -30,8 +34,13 @@ export class EmailService {
     }
 
     private loadTemplates(): void {
-        const templatesDir = path.join(process.cwd(), 'src', 'common', 'email', 'templates');
         try {
+            const templatesDir = this.templateDirectories.find((directory) => fs.existsSync(directory));
+
+            if (!templatesDir) {
+                throw new Error(`No email templates directory found in: ${this.templateDirectories.join(', ')}`);
+            }
+
             const templateFiles = fs.readdirSync(templatesDir);
             for (const file of templateFiles) {
                 if (file.endsWith('.hbs')) {

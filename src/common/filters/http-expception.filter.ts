@@ -7,7 +7,6 @@ import {
     BadRequestException,
 } from '@nestjs/common';
 import { Response } from 'express';
-import { MongoError } from 'mongodb';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
