@@ -52,7 +52,7 @@ export class FirebaseService {
         dataOnly: boolean = false
     ) {
         try {
-            const user = await this.userService.getProfile(userId);
+            const user: any = await this.userService.getProfile(userId);
             if (!user || !user.FCMToken) {
                 Logger.warn(`No FCM token found for user ${userId}`);
                 return null;

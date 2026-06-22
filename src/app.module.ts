@@ -100,22 +100,16 @@ export class AppModule {
     consumer
       .apply(RedisRateLimitMiddleware, JwtMiddleware)
       .exclude(
-        { path: 'auth/signup', method: RequestMethod.ALL },
-        { path: 'auth/verify-otp', method: RequestMethod.ALL },
-        { path: 'auth/web-driver-signup', method: RequestMethod.POST },
-        { path: 'auth/web-customer-signup', method: RequestMethod.POST },
+        { path: 'auth/register', method: RequestMethod.POST },
+        { path: 'auth/login', method: RequestMethod.POST },
+        { path: 'auth/forgot-password', method: RequestMethod.POST },
+        { path: 'auth/reset-password', method: RequestMethod.POST },
+        { path: 'auth/verify-email', method: RequestMethod.POST },
+        { path: 'auth/resend-verification', method: RequestMethod.POST },
         { path: 'webhook/stripe', method: RequestMethod.ALL },
         { path: 'webhook/connect/stripe', method: RequestMethod.ALL },
-        { path: 'auth/login', method: RequestMethod.ALL },
-        { path: 'auth/verify', method: RequestMethod.ALL },
-        { path: 'auth/resend', method: RequestMethod.ALL },
-        { path: 'auth/forgot', method: RequestMethod.ALL },
-        { path: 'auth/reset', method: RequestMethod.ALL },
-        { path: 'auth/change', method: RequestMethod.ALL },
         { path: 'files/upload', method: RequestMethod.POST },
         { path: 'files/(.*)', method: RequestMethod.ALL },
-        { path: 'auth/phone-login/request-otp', method: RequestMethod.ALL },
-        { path: 'auth/phone-login/verify-otp', method: RequestMethod.ALL },
         { path: 'api-keys/(.*)', method: RequestMethod.ALL },
       )
       .forRoutes({ path: '(.*)', method: RequestMethod.ALL });

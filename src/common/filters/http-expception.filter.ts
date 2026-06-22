@@ -24,6 +24,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         let message: string = exception.message || 'Internal server error';
         let validationErrors: any = null;
         let exceptionData: any = null;
+        let errorCode: string | null = null;
 
         // Handle built-in HTTP exceptions
         if (exception instanceof BadRequestException) {
@@ -32,6 +33,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
             validationErrors = res?.error?.details || null;
             exceptionData = res?.data || null;
             status = exception.getStatus();
+            errorCode = res?.code || res?.errorCode || null;
         } else if (exception instanceof HttpException) {
             const res = exception.getResponse();
             status = exception.getStatus();
@@ -39,6 +41,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
                 message = typeof res['message'] === 'string' ? res['message'] : 'Validation failed';
                 validationErrors = res['details'];
                 exceptionData = res['data'] || null;
+                errorCode = (res as any).code || (res as any).errorCode || null;
             } else {
                 message = exception.message;
             }
@@ -63,8 +66,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
             data: {}, // Optional: You can pass extra data here
             message,
             statusCode: status,
+            ...(errorCode ? { code: errorCode, errorCode } : {}),
             error: {
-                details: validationErrors || exceptionData,
+                details: validationErrors || exceptionData || (errorCode ? { code: errorCode } : null),
             },
             timestamp: new Date().toISOString(),
         });

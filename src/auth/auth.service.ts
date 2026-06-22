@@ -1,564 +1,377 @@
 import {
   BadRequestException,
-  ConflictException,
-  HttpException,
-  HttpStatus,
   Injectable,
-  NotFoundException,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
-import { User, UserDocument } from '../schemas/user.schema';
 import * as bcrypt from 'bcryptjs';
-import { SignupDto } from './dto/signup.dto';
+import * as crypto from 'crypto';
+import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { TwilioService } from '../common/twilio/twilio.service';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { User, UserDocument } from '../schemas/user.schema';
 import { EmailService } from '../common/email/email.service';
-import { MessageTemplates } from '../common/messages';
-import { generateOtp } from '../common/utils/otpgenerator';
-import { SignupWithVehicleDto } from './dto/signup-with-vehicle.dto';
-import { Vehicle, VehicleDocument } from '../schemas/vehicle.schema';
-import {
-  DeletedUser,
-  DeletedUserDocument,
-} from '../schemas/deleted-user.schema';
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
-    @InjectModel(Vehicle.name) private vehicleModel: Model<VehicleDocument>,
-    @InjectModel(DeletedUser.name)
-    private deletedUserModel: Model<DeletedUserDocument>,
-
     private jwtService: JwtService,
-    private twilioService: TwilioService,
+    private configService: ConfigService,
     private emailService: EmailService,
   ) {}
 
-  async signup(data: SignupDto) {
-    const normalizedEmail = data.email.toLowerCase();
+  async register(data: RegisterDto) {
+    const emailLower = data.email.toLowerCase();
 
-    // Check if any user has this verified email
-    const existingEmailUser = await this.userModel.findOne({
-      email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') },
-    });
+    // Duplicate check on email
+    const existingEmailUser = await this.userModel.findOne({ email: emailLower });
     if (existingEmailUser) {
-      throw new ConflictException('Email already exists');
+      throw new BadRequestException('Email already registered');
     }
 
-    // Check if any user has this verified phone
-    const existingPhoneUser = await this.userModel.findOne({
-      phone: data.phone,
-    });
+    // Normalize phone (digits-only)
+    const phoneNormalized = data.phone.replace(/\D/g, '');
+
+    // Duplicate check on phone
+    const existingPhoneUser = await this.userModel.findOne({ phone: phoneNormalized });
     if (existingPhoneUser) {
-      throw new ConflictException('Phone number already exists');
+      throw new BadRequestException('Phone already registered');
     }
 
-    // Optionally remove old unverified users with same email or phone
-    await this.userModel.deleteMany({
-      $or: [
-        {
-          email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') },
-          isEmailVerified: false,
-        },
-        { phone: data.phone, isPhoneVerified: false },
-      ],
-    });
+    // Password hashed with bcrypt, cost factor 12
+    const passwordHash = await bcrypt.hash(data.password, 12);
 
-    const hashed = await bcrypt.hash(data.password, 10);
-    const phoneOTP = generateOtp();
-    const emailOTP = generateOtp();
+    // Referral code generation: ICE-[NAME][4CHARS]
+    // Clean name segment from firstName (alphabetic chars only, uppercase)
+    const nameSegment = data.firstName.replace(/[^a-zA-Z]/g, '').toUpperCase();
 
-    const user = new this.userModel({
-      ...data,
-      email: normalizedEmail,
-      password: hashed,
-      OTP: phoneOTP,
-      emailOTP: emailOTP,
-      role: 'driver',
-    });
+    let referralCode = '';
+    let isUnique = false;
+    let attempts = 0;
 
-    // await this.twilioService.sendSms(data.phone, MessageTemplates.verificationCode(phoneOTP));
-    // await this.emailService.sendTemplatedEmail(
-    //     'emailVerification',
-    //     {
-    //         otpCode: emailOTP,
-    //         currentYear: new Date().getFullYear()
-    //     },
-    //     'Email Verification',
-    //     [data.email]
-    // );
-
-    await user.save();
-    return { message: 'User created successfully' };
-  }
-  async customerSignup(data: SignupDto) {
-    const normalizedEmail = data.email.toLowerCase();
-
-    // Check if any user has this verified email
-    const existingEmailUser = await this.userModel.findOne({
-      email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') },
-    });
-    if (existingEmailUser) {
-      throw new ConflictException('Email already exists');
+    while (attempts < 10 && !isUnique) {
+      // 4 random alphanumeric chars in uppercase
+      const randomChars = this.generateRandomChars(4);
+      referralCode = `ICE-${nameSegment}${randomChars}`;
+      const existing = await this.userModel.findOne({ referralCode });
+      if (!existing) {
+        isUnique = true;
+      }
+      attempts++;
     }
 
-    // Check if any user has this verified phone
-    const existingPhoneUser = await this.userModel.findOne({
-      phone: data.phone,
-    });
-    if (existingPhoneUser) {
-      throw new ConflictException('Phone number already exists');
+    if (!isUnique) {
+      throw new BadRequestException('Failed to generate a unique referral code');
     }
 
-    // Optionally remove old unverified users with same email or phone
-    await this.userModel.deleteMany({
-      $or: [
-        {
-          email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') },
-          isEmailVerified: false,
-        },
-        { phone: data.phone, isPhoneVerified: false },
-      ],
-    });
-
-    const hashed = await bcrypt.hash(data.password, 10);
-    const phoneOTP = generateOtp();
-    const emailOTP = generateOtp();
-
-    const user = new this.userModel({
-      ...data,
-      email: normalizedEmail,
-      password: hashed,
-      OTP: phoneOTP,
-      emailOTP: emailOTP,
-      role: 'customer',
-    });
-
-    await this.twilioService.sendSms(
-      data.phone,
-      MessageTemplates.verificationCode(phoneOTP),
-    );
-    await this.emailService.sendTemplatedEmail(
-      'emailVerification',
-      {
-        otpCode: emailOTP,
-        currentYear: new Date().getFullYear(),
-      },
-      'Email Verification',
-      [data.email],
-    );
-
-    await user.save();
-
-    return { message: 'User created successfully' };
-  }
-  async signupWithVehicle(data: SignupWithVehicleDto) {
-    const { user: userData, vehicle: vehicleData } = data;
-
-    const normalizedEmail = userData.email.toLowerCase();
-
-    const existingEmailUser = await this.userModel.findOne({
-      email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') },
-    });
-    if (existingEmailUser) {
-      throw new ConflictException('Email already exists');
+    // Referral linking
+    let referredByUserId: string | null = null;
+    if (data.referredByCode) {
+      const referrer = await this.userModel.findOne({
+        referralCode: data.referredByCode.toUpperCase(),
+      });
+      if (referrer) {
+        referredByUserId = referrer._id.toString();
+      }
     }
 
-    const existingPhoneUser = await this.userModel.findOne({
-      phone: userData.phone,
-    });
-    if (existingPhoneUser) {
-      throw new ConflictException('Phone number already exists');
-    }
-
-    await this.userModel.deleteMany({
-      $or: [
-        {
-          email: { $regex: new RegExp(`^${normalizedEmail}$`, 'i') },
-          isEmailVerified: false,
-        },
-        { phone: userData.phone, isPhoneVerified: false },
-      ],
-    });
-
-    const hashedPassword = await bcrypt.hash(userData.password, 10);
-    const phoneOTP = generateOtp();
-    const emailOTP = generateOtp();
-
+    // Create new user
     const newUser = new this.userModel({
-      ...userData,
-      email: normalizedEmail,
-      password: hashedPassword,
-      OTP: phoneOTP,
-      emailOTP: emailOTP,
-      role: 'driver',
+      email: emailLower,
+      phone: phoneNormalized,
+      password: passwordHash,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      userType: data.userType,
+      referralCode,
+      referredByUserId,
+      iceDriverId: data.userType === 'PARTNER' ? (data.iceDriverId || null) : null,
     });
 
-    await this.vehicleModel.findOneAndUpdate(
-      { userId: newUser._id },
-      { $set: { ...vehicleData, userId: newUser._id } },
-      { new: true, runValidators: true, upsert: true },
-    );
+    // Generate numeric email verification OTP code (6 digits)
+    const verificationToken = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationTokenHash = crypto.createHash('sha256').update(verificationToken).digest('hex');
+    const verificationExpiresAt = new Date();
+    verificationExpiresAt.setHours(verificationExpiresAt.getHours() + 24); // 24-hour expiry
+
+    newUser.emailVerificationTokens = [{
+      tokenHash: verificationTokenHash,
+      expiresAt: verificationExpiresAt,
+      used: false,
+    }];
 
     await newUser.save();
 
-    await this.twilioService.sendSms(
-      userData.phone,
-      MessageTemplates.verificationCode(phoneOTP),
-    );
-    await this.emailService.sendTemplatedEmail(
-      'emailVerification',
-      {
-        otpCode: emailOTP,
-        currentYear: new Date().getFullYear(),
-      },
-      'Email Verification',
-      [userData.email],
-    );
+    // Send email verification code
+    try {
+      await this.emailService.sendVerificationEmail(newUser.email, verificationToken);
+    } catch (error) {
+      // Log or handle, but do not block registration return
+    }
+
+    // Sign JWT tokens
+    const tokens = this.generateTokens(newUser);
+
+    // Exclude password in return
+    const userObj = newUser.toObject() as any;
+    delete userObj.password;
 
     return {
-      message: 'User and vehicle created successfully',
-      userId: newUser._id,
+      user: userObj,
+      tokens,
     };
   }
 
   async login(data: LoginDto) {
-    console.log(data);
-    const identifier = data.identifier.trim().toLowerCase();
+    const emailLower = data.email.toLowerCase();
 
-    const user = await this.userModel
-      .findOne({
-        $or: [{ email: identifier }, { phone: identifier }],
-      })
-      .exec();
-
+    // 1. Find user by lowercased email
+    const user = await this.userModel.findOne({ email: emailLower });
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Require both verifications
-    if (!user.isEmailVerified || !user.isPhoneVerified) {
-      let message = '';
-
-      if (!user.isEmailVerified && !user.isPhoneVerified) {
-        message = 'Both email and phone must be verified';
-      } else if (!user.isEmailVerified) {
-        message = 'Email must be verified';
-      } else if (!user.isPhoneVerified) {
-        message = 'Phone must be verified';
-      }
-
-      throw new HttpException(
-        {
-          statusCode: HttpStatus.UNAUTHORIZED,
-          message,
-          data: {
-            isEmailVerified: user.isEmailVerified,
-            isPhoneVerified: user.isPhoneVerified,
-          },
-        },
-        HttpStatus.UNAUTHORIZED,
-      );
+    // 2. Check for migrated users requiring password reset
+    if (user.status === 'PASSWORD_RESET_REQUIRED' || user.isMigrated || !user.password) {
+      throw new ForbiddenException({
+        message: 'Password reset is required. Please go through the forgot-password flow.',
+        code: 'PASSWORD_RESET_REQUIRED',
+        errorCode: 'PASSWORD_RESET_REQUIRED',
+      });
     }
 
-    const match = await bcrypt.compare(data.password, user.password);
-    if (!match) {
-      throw new UnauthorizedException('Invalid credentials');
+    // 3. Check account status is ACTIVE
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedException('Account is not active');
     }
 
-    const token = this.jwtService.sign({
-      uid: (user as UserDocument)?._id?.toString(),
-    });
-    user.password = '';
-    return { token, user };
+    // 4. Compare bcrypt password hash
+    const isPasswordValid = await bcrypt.compare(data.password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    // 5. Update lastLoginAt
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    // 6. Generate access & refresh tokens
+    const tokens = this.generateTokens(user);
+
+    // 7. Exclude password hash from response
+    const userObj = user.toObject() as any;
+    delete userObj.password;
+
+    return {
+      user: userObj,
+      tokens,
+    };
   }
 
-  async verifyContact(identifier: string, otp: string) {
-    console.log(4545);
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const phoneRegex = /^\+?[0-9]{7,15}$/; // adjust to your phone format
+  private generateRandomChars(length: number): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
 
-    let type: 'email' | 'phone';
-    if (emailRegex.test(identifier)) {
-      type = 'email';
-    } else if (phoneRegex.test(identifier)) {
-      type = 'phone';
-    } else {
-      throw new BadRequestException(
-        'Identifier must be a valid email or phone number',
-      );
+  private generateTokens(user: UserDocument) {
+    const payload = {
+      userId: user._id.toString(),
+      uid: user._id.toString(), // Keep uid for compatibility with JwtMiddleware
+      email: user.email,
+      userType: user.userType,
+    };
+    const accessTokenExpires = this.configService.get<string>('JWT_EXPIRES_IN') || 
+                               this.configService.get<string>('config.jwt.expiresIn') || 
+                               '15m'; // short-lived default
+    const refreshTokenExpires = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || 
+                                this.configService.get<string>('config.jwt.refreshExpiresIn') || 
+                                '7d'; // long-lived default
+
+    const accessToken = this.jwtService.sign(payload, { expiresIn: accessTokenExpires as any });
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: refreshTokenExpires as any });
+
+    return { accessToken, refreshToken };
+  }
+
+  async forgotPassword(data: ForgotPasswordDto) {
+    const emailLower = data.email.toLowerCase();
+    const user = await this.userModel.findOne({ email: emailLower });
+
+    // Always return generic 200 message - never reveal if email is registered
+    const successResponse = {
+      message: 'If that email exists, a reset link has been sent',
+    };
+
+    if (!user) {
+      return successResponse;
     }
 
-    const user = await this.userModel.findOne(
-      type === 'email' ? { email: identifier } : { phone: identifier },
-    );
-    if (!user) throw new BadRequestException('User not found');
+    // Generate single-use, time-limited reset token (1-hour expiry)
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 1); // 1-hour expiry
 
-    if (type === 'email') {
-      if (user.emailOTP !== otp) throw new BadRequestException('Invalid OTP');
-      user.isEmailVerified = true;
-    } else {
-      if (user.OTP !== otp) throw new BadRequestException('Invalid OTP');
-      user.isPhoneVerified = true;
+    if (!user.resetTokens) {
+      user.resetTokens = [];
     }
+    user.resetTokens.push({
+      tokenHash,
+      expiresAt,
+      used: false,
+    });
+
+    await user.save();
+
+    // Reset link uses the frontend reset URL on app.iceridepartners.com
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'https://app.iceridepartners.com';
+    const resetLink = `${frontendUrl}/reset-password?token=${token}`;
+
+    try {
+      await this.emailService.sendPasswordResetEmail(user.email, resetLink);
+    } catch (error) {
+      // Log error but do not fail or expose to user
+    }
+
+    return successResponse;
+  }
+
+  async resetPassword(data: ResetPasswordDto) {
+    const tokenHash = crypto.createHash('sha256').update(data.token).digest('hex');
+
+    // Find the user who has a matching token hash in their resetTokens
+    const user = await this.userModel.findOne({
+      'resetTokens.tokenHash': tokenHash,
+    });
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    const tokenEntry = user.resetTokens?.find((t) => t.tokenHash === tokenHash);
+
+    if (!tokenEntry || tokenEntry.used || new Date() > tokenEntry.expiresAt) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    // Hash the new password (bcrypt, cost 12)
+    const passwordHash = await bcrypt.hash(data.newPassword, 12);
+    user.password = passwordHash;
+
+    // Clear PASSWORD_RESET_REQUIRED status if it was set
+    if (user.status === 'PASSWORD_RESET_REQUIRED') {
+      user.status = 'ACTIVE';
+    }
+    user.isMigrated = false;
+
+    // Invalidate ALL existing reset tokens for that user
+    user.resetTokens?.forEach((t) => {
+      t.used = true;
+    });
 
     await user.save();
 
     return {
-      message: `${type.charAt(0).toUpperCase() + type.slice(1)} verified successfully`,
+      message: 'Password has been reset successfully',
     };
   }
 
-  async resendOtp(identifier: string) {
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier);
-    const isPhone = /^\+?\d{10,15}$/.test(identifier); // Allows optional `+` and 10–15 digits
+  async verifyEmail(data: VerifyEmailDto) {
+    const tokenHash = crypto.createHash('sha256').update(data.token).digest('hex');
 
-    if (!isEmail && !isPhone) {
-      throw new BadRequestException('Invalid email or phone number');
-    }
-    const query = isEmail ? { email: identifier } : { phone: identifier };
-    const user = await this.userModel.findOne(query);
-    if (!user) throw new BadRequestException('User not found');
-
-    const otp = generateOtp();
-    let isOTPSent = false;
-    let message = '';
-
-    if (isEmail) {
-      user.emailOTP = otp;
-
-      try {
-        await this.emailService.sendTemplatedEmail(
-          'emailVerification',
-          {
-            otpCode: otp,
-            currentYear: new Date().getFullYear(),
-          },
-          'Email Verification',
-          [identifier],
-        );
-        isOTPSent = true;
-        message = 'OTP sent successfully to email';
-      } catch (err) {
-        console.error('Email sending failed:', err);
-        message = 'Failed to send OTP to email';
-      }
-    }
-
-    if (isPhone) {
-      user.OTP = otp;
-
-      try {
-        const result = await this.twilioService.sendSms(
-          user.phone,
-          MessageTemplates.verificationCode(otp),
-        );
-        if (result) {
-          isOTPSent = true;
-          message = 'OTP sent successfully to phone';
-        } else {
-          message = 'Failed to send OTP to phone';
-        }
-      } catch (err) {
-        console.error('SMS sending failed:', err);
-        message = 'Unable to send OTP, Please check your phone number';
-      }
-    }
-
-    await user.save();
-
-    if (!isOTPSent) {
-      throw new BadRequestException(message);
-    }
-
-    return { message };
-  }
-
-  async forgotPassword(identifier: string) {
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier);
-    const isPhone = /^\+?\d{10,15}$/.test(identifier); // Allows optional `+` and 10–15 digits
-
-    if (!isEmail && !isPhone) {
-      throw new BadRequestException('Invalid email or phone number');
-    }
-
-    const query = isEmail ? { email: identifier } : { phone: identifier };
-    const user = await this.userModel.findOne(query);
-
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    const otp = generateOtp();
-    user.OTP = otp;
-    user.emailOTP = otp;
-
-    if (isPhone) {
-      await this.twilioService.sendSms(
-        user.phone,
-        MessageTemplates.verificationCode(otp),
-      );
-    }
-
-    if (isEmail) {
-      await this.emailService.sendTemplatedEmail(
-        'emailVerification',
-        {
-          otpCode: otp,
-          currentYear: new Date().getFullYear(),
-        },
-        'Email Verification',
-        [identifier],
-      );
-    }
-
-    await user.save();
-    return { message: 'OTP sent successfully' };
-  }
-
-  async resetPassword(identifier: string, password: string, otp: string) {
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier);
-    const isPhone = /^\+?\d{10,15}$/.test(identifier); // Allows optional `+` and 10–15 digits
-
-    if (!isEmail && !isPhone) {
-      throw new BadRequestException('Invalid email or phone number');
-    }
-
-    const query = isEmail ? { email: identifier } : { phone: identifier };
-    const user = await this.userModel.findOne(query);
-
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    if (user.OTP !== otp) {
-      throw new BadRequestException('Invalid OTP');
-    }
-
-    const hashed = await bcrypt.hash(password, 10);
-    user.password = hashed;
-    user.OTP = null;
-    user.emailOTP = null;
-
-    await user.save();
-
-    return { message: 'Password reset successfully' };
-  }
-
-  async changePassword(
-    email: string,
-    oldPassword: string,
-    newPassword: string,
-  ) {
-    const user = await this.userModel.findOne({ email });
-    if (!user) throw new UnauthorizedException('User not found');
-    const match = await bcrypt.compare(oldPassword, user.password);
-    if (!match) throw new UnauthorizedException('Invalid credentials');
-    const hashed = await bcrypt.hash(newPassword, 10);
-    user.password = hashed;
-    await user.save();
-    return { message: 'Password changed successfully' };
-  }
-
-  async deleteUser(
-    userId: string,
-    deletedBy: string = 'self',
-    reason: string = '',
-  ): Promise<{ message: string }> {
-    const user = await this.userModel.findById(userId).exec();
-    if (!user) throw new NotFoundException('User not found');
-
-    const { _id: _deletedId, ...obj } = user.toObject();
-
-    await this.deletedUserModel.create({
-      ...obj,
-      deletedAt: new Date(),
-      deletedBy: deletedBy || null,
-      reason: reason || null,
+    // Find the user with matching email verification token
+    const user = await this.userModel.findOne({
+      'emailVerificationTokens.tokenHash': tokenHash,
     });
 
-    await this.userModel.findByIdAndDelete(userId).exec();
-    return { message: 'User deleted successfully' };
-  }
-
-  /**
-   * API to verify OTP for email or phone
-   * @param identifier - email or phone
-   * @param otp - OTP to verify
-   * @returns {Promise<{ valid: boolean, message: string }>} - validity and message
-   */
-  async verifyOtp(
-    identifier: string,
-    otp: string,
-  ): Promise<{ valid: boolean; message: string }> {
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier);
-    const isPhone = /^\+?\d{10,15}$/.test(identifier);
-    if (!isEmail && !isPhone) {
-      throw new BadRequestException('Invalid email or phone number');
-    }
-    const query = isEmail ? { email: identifier } : { phone: identifier };
-    const user = await this.userModel.findOne(query);
     if (!user) {
-      throw new BadRequestException('User not found');
+      throw new BadRequestException('Invalid or expired verification token');
     }
-    let valid = false;
-    let message = '';
-    if (isEmail) {
-      valid = user.emailOTP === otp;
-      message = valid ? 'Valid OTP for email' : 'Invalid OTP for email';
-    } else {
-      valid = user.OTP === otp;
-      message = valid ? 'Valid OTP for phone' : 'Invalid OTP for phone';
+
+    if (user.emailVerifiedAt !== null) {
+      return {
+        message: 'Email is already verified',
+      };
     }
-    return { valid, message };
+
+    const tokenEntry = user.emailVerificationTokens?.find((t) => t.tokenHash === tokenHash);
+
+    if (!tokenEntry || tokenEntry.used || new Date() > tokenEntry.expiresAt) {
+      throw new BadRequestException('Invalid or expired verification token');
+    }
+
+    // Valid token: mark verified, invalidate token
+    user.emailVerifiedAt = new Date();
+    user.emailVerificationTokens?.forEach((t) => {
+      t.used = true;
+    });
+
+    await user.save();
+
+    return {
+      message: 'Email verified successfully',
+    };
   }
 
-  /**
-   * Request OTP for phone login
-   * @param phone - phone number
-   */
-  async requestPhoneLoginOtp(phone: string) {
-    const user = await this.userModel.findOne({ phone });
-    if (!user) throw new BadRequestException('User not found');
-    const otp = generateOtp();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
-    user.phoneLoginOTP = otp;
-    user.phoneLoginOTPExpiresAt = expiresAt;
-    await user.save();
-    await this.twilioService.sendSms(
-      phone,
-      MessageTemplates.verificationCode(otp),
-    );
-    return { message: 'OTP sent to phone' };
-  }
+  async resendVerification(data: ResendVerificationDto) {
+    const emailLower = data.email.toLowerCase();
+    const user = await this.userModel.findOne({ email: emailLower });
 
-  /**
-   * Verify OTP for phone login and issue JWT
-   * @param phone - phone number
-   * @param otp - OTP
-   */
-  async verifyPhoneLoginOtp(phone: string, otp: string) {
-    const user = await this.userModel.findOne({ phone });
-    if (!user) throw new BadRequestException('User not found');
-    if (!user.phoneLoginOTP || !user.phoneLoginOTPExpiresAt) {
-      throw new BadRequestException('No OTP requested');
+    // Generic success response to avoid email enumeration
+    const successResponse = {
+      message: 'If that email exists, a verification code has been sent',
+    };
+
+    if (!user) {
+      return successResponse;
     }
-    if (user.phoneLoginOTP !== otp) {
-      throw new BadRequestException('Invalid OTP');
+
+    if (user.emailVerifiedAt !== null) {
+      return {
+        message: 'Email is already verified',
+      };
     }
-    if (user.phoneLoginOTPExpiresAt.getTime() < Date.now()) {
-      throw new BadRequestException('OTP expired');
+
+    // Invalidate all prior verification tokens
+    user.emailVerificationTokens?.forEach((t) => {
+      t.used = true;
+    });
+
+    // Generate a fresh verification OTP code (6 digits)
+    const verificationToken = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationTokenHash = crypto.createHash('sha256').update(verificationToken).digest('hex');
+    const verificationExpiresAt = new Date();
+    verificationExpiresAt.setHours(verificationExpiresAt.getHours() + 24); // 24-hour expiry
+
+    if (!user.emailVerificationTokens) {
+      user.emailVerificationTokens = [];
     }
-    // Invalidate OTP after use
-    user.phoneLoginOTP = null;
-    user.phoneLoginOTPExpiresAt = null;
+    user.emailVerificationTokens.push({
+      tokenHash: verificationTokenHash,
+      expiresAt: verificationExpiresAt,
+      used: false,
+    });
+
     await user.save();
-    const token = this.jwtService.sign({ uid: String(user._id) });
-    user.password = '';
-    return { token, user };
+
+    try {
+      await this.emailService.sendVerificationEmail(user.email, verificationToken);
+    } catch (error) {
+      // Log or handle, but do not fail response
+    }
+
+    return successResponse;
   }
 }

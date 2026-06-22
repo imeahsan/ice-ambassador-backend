@@ -108,17 +108,17 @@ export class EmailService {
 
     async sendPasswordResetEmail(email: string, resetLink: string): Promise<SendEmailCommandOutput> {
         return this.sendTemplatedEmail(
-            'password-reset',
-            { resetLink, expiryHours: 24 },
+            'passwordReset',
+            { resetLink, expiryHours: 1, currentYear: new Date().getFullYear() },
             'Reset Your Password',
             [email],
         );
     }
 
-    async sendVerificationEmail(email: string, verificationLink: string): Promise<SendEmailCommandOutput> {
+    async sendVerificationEmail(email: string, token: string): Promise<SendEmailCommandOutput> {
         return this.sendTemplatedEmail(
-            'verification',
-            { verificationLink, expiryHours: 48 },
+            'emailVerification',
+            { otpCode: token, currentYear: new Date().getFullYear() },
             'Verify Your Email Address',
             [email],
         );

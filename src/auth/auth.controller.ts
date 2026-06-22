@@ -1,102 +1,49 @@
-import {Body, Controller, Delete, HttpCode, HttpStatus, Post, Req, UseGuards} from '@nestjs/common';
-import {AuthService} from './auth.service';
-import {SignupDto} from './dto/signup.dto';
-import {LoginDto} from './dto/login.dto';
-import {VerifyOtpDto} from "./dto/verify-otp.dto";
-import {logger} from "handlebars";
-import {ResendOtpDto} from "./dto/resend-otp.dto";
-import {ForgotPasswordDto} from "./dto/forgot-password.dto";
-import {ResetPasswordDto} from "./dto/reset-password.dto";
-import {ChangePasswordDto} from "./dto/change-password.dto";
-import {SignupWithVehicleDto} from "./dto/signup-with-vehicle.dto";
-import {RequestWithUser} from "../common/interfaces/request-with-user.interface";
-
+import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 
 @Controller('auth')
 export class AuthController {
-    constructor(private authService: AuthService) {
-    }
+    constructor(private readonly authService: AuthService) {}
 
     @HttpCode(HttpStatus.CREATED)
-    @Post('signup')
-    signup(@Body() body: SignupDto) {
-        console.log('signup', body);
-        return this.authService.signup(body);
+    @Post('register')
+    async register(@Body() body: RegisterDto) {
+        return this.authService.register(body);
     }
 
-    @Post('web-driver-signup')
-    async signupWithVehicle(@Body() dto: SignupWithVehicleDto) {
-        return this.authService.signupWithVehicle(dto);
-    }
-
-    @Post('web-customer-signup')
-    async customerSignup(@Body() dto: SignupDto) {
-        return this.authService.customerSignup(dto);
-    }
-
-
+    @HttpCode(HttpStatus.OK)
     @Post('login')
-    login(@Body() body: LoginDto) {
+    async login(@Body() body: LoginDto) {
         return this.authService.login(body);
     }
 
-    @Post('verify')
-    verify(@Body() body: VerifyOtpDto) {
-
-        return this.authService.verifyContact(body.identifier, body.otp, );
+    @HttpCode(HttpStatus.OK)
+    @Post('forgot-password')
+    async forgotPassword(@Body() body: ForgotPasswordDto) {
+        return this.authService.forgotPassword(body);
     }
 
-    @Post('verify-otp')
-    async verifyOtp(@Body() body: VerifyOtpDto) {
-        return this.authService.verifyOtp(body.identifier, body.otp);
+    @HttpCode(HttpStatus.OK)
+    @Post('reset-password')
+    async resetPassword(@Body() body: ResetPasswordDto) {
+        return this.authService.resetPassword(body);
     }
 
-    @Post('resend')
-    resend(@Body() data: ResendOtpDto) {
-
-        return this.authService.resendOtp(data.identifier);
+    @HttpCode(HttpStatus.OK)
+    @Post('verify-email')
+    async verifyEmail(@Body() body: VerifyEmailDto) {
+        return this.authService.verifyEmail(body);
     }
 
-    // forgot password
-    @Post('forgot')
-    forgot(@Body() body: ForgotPasswordDto) {
-        return this.authService.forgotPassword(body.identifier);
+    @HttpCode(HttpStatus.OK)
+    @Post('resend-verification')
+    async resendVerification(@Body() body: ResendVerificationDto) {
+        return this.authService.resendVerification(body);
     }
-
-    // reset password
-    @Post('reset')
-    reset(@Body() body: ResetPasswordDto) {
-        return this.authService.resetPassword(body.identifier, body.password, body.otp);
-    }
-
-    // change password
-    @Post('change')
-    change(@Body() body: ChangePasswordDto) {
-        return this.authService.changePassword(body.identifier, body.oldPassword, body.newPassword);
-    }
-
-    @Post('logout')
-    async logout() {
-        // The client should remove token on their side
-        return {message: 'Logout successful, please delete your token on client'};
-    }
-
-    @Delete('delete-account')
-    async deleteAccount(@Req() req: RequestWithUser) {
-        // The client should remove token on their side
-        return  this.authService.deleteUser(req.userId);
-
-    }
-
-    @Post('phone-login/request-otp')
-    async requestPhoneLoginOtp(@Body('phone') phone: string) {
-        return this.authService.requestPhoneLoginOtp(phone);
-    }
-
-    @Post('phone-login/verify-otp')
-    async verifyPhoneLoginOtp(@Body() body: { phone: string; otp: string }) {
-        return this.authService.verifyPhoneLoginOtp(body.phone, body.otp);
-    }
-
-
 }
