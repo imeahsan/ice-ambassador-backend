@@ -110,6 +110,8 @@ export class AuthService {
 
     await newUser.save();
 
+    console.log(`[DEVELOPMENT] Verification code for ${newUser.email}: ${verificationToken}`);
+
     // Send email verification code
     try {
       await this.emailService.sendVerificationEmail(newUser.email, verificationToken);
@@ -139,8 +141,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // 2. Check for migrated users requiring password reset
-    if (user.status === 'PASSWORD_RESET_REQUIRED' || user.isMigrated || !user.password) {
+    // 2. Check if user has a password
+    if (!user.password) {
       throw new ForbiddenException({
         message: 'Password reset is required. Please go through the forgot-password flow.',
         code: 'PASSWORD_RESET_REQUIRED',
@@ -239,6 +241,9 @@ export class AuthService {
     const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'https://app.iceridepartners.com';
     const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
+    console.log(`[DEVELOPMENT] Password reset link for ${user.email}: ${resetLink}`);
+    console.log(`[DEVELOPMENT] Raw password reset token: ${token}`);
+
     try {
       await this.emailService.sendPasswordResetEmail(user.email, resetLink);
     } catch (error) {
@@ -270,11 +275,6 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(data.newPassword, 12);
     user.password = passwordHash;
 
-    // Clear PASSWORD_RESET_REQUIRED status if it was set
-    if (user.status === 'PASSWORD_RESET_REQUIRED') {
-      user.status = 'ACTIVE';
-    }
-    user.isMigrated = false;
 
     // Invalidate ALL existing reset tokens for that user
     user.resetTokens?.forEach((t) => {
@@ -314,6 +314,7 @@ export class AuthService {
 
     // Valid token: mark verified, invalidate token
     user.emailVerifiedAt = new Date();
+    user.status = 'ACTIVE';
     user.emailVerificationTokens?.forEach((t) => {
       t.used = true;
     });
@@ -365,6 +366,8 @@ export class AuthService {
     });
 
     await user.save();
+
+    console.log(`[DEVELOPMENT] Fresh verification code for ${user.email}: ${verificationToken}`);
 
     try {
       await this.emailService.sendVerificationEmail(user.email, verificationToken);

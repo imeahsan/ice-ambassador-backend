@@ -14,11 +14,8 @@ export class User {
     @Prop({ required: false })
     password?: string;
 
-    @Prop({ type: String, enum: ['ACTIVE', 'SUSPENDED', 'PENDING', 'PASSWORD_RESET_REQUIRED'], default: 'ACTIVE' })
+    @Prop({ type: String, enum: ['ACTIVE', 'SUSPENDED', 'PENDING'], default: 'PENDING' })
     status: string;
-
-    @Prop({ type: Boolean, default: false })
-    isMigrated: boolean;
 
     @Prop({ type: Date, default: null })
     lastLoginAt: Date | null;
@@ -72,8 +69,6 @@ export class User {
         used: boolean;
     }>;
 
-    @Prop({ type: String, default: null, index: true })
-    firebaseUid?: string | null;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

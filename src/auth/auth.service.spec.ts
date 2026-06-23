@@ -24,7 +24,6 @@ describe('AuthService - Login', () => {
       lastName: 'Doe',
       userType: 'AMBASSADOR',
       status: 'ACTIVE',
-      isMigrated: false,
       lastLoginAt: null,
       resetTokens: [] as any[],
       emailVerifiedAt: null as Date | null,
@@ -145,39 +144,6 @@ describe('AuthService - Login', () => {
     ).rejects.toThrow(new UnauthorizedException('Account is not active'));
   });
 
-  it('should throw 403 and PASSWORD_RESET_REQUIRED if status is PASSWORD_RESET_REQUIRED', async () => {
-    const userInstance = mockUserInstance({ status: 'PASSWORD_RESET_REQUIRED' });
-    userModel.findOne.mockResolvedValue(userInstance);
-
-    try {
-      await service.login({
-        email: 'migrated@example.com',
-        password: 'any_password',
-      });
-      fail('Should have thrown ForbiddenException');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ForbiddenException);
-      const res: any = error.getResponse();
-      expect(res.code).toBe('PASSWORD_RESET_REQUIRED');
-    }
-  });
-
-  it('should throw 403 and PASSWORD_RESET_REQUIRED if isMigrated is true', async () => {
-    const userInstance = mockUserInstance({ isMigrated: true });
-    userModel.findOne.mockResolvedValue(userInstance);
-
-    try {
-      await service.login({
-        email: 'migrated@example.com',
-        password: 'any_password',
-      });
-      fail('Should have thrown ForbiddenException');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ForbiddenException);
-      const res: any = error.getResponse();
-      expect(res.code).toBe('PASSWORD_RESET_REQUIRED');
-    }
-  });
 
   it('should throw 403 and PASSWORD_RESET_REQUIRED if password field is empty', async () => {
     const userInstance = mockUserInstance({ password: '' });
@@ -275,14 +241,12 @@ describe('AuthService - Login', () => {
       ).rejects.toThrow(new BadRequestException('Invalid or expired reset token'));
     });
 
-    it('should reset password, invalidate all tokens, clear PASSWORD_RESET_REQUIRED and isMigrated flags, and save user', async () => {
+    it('should reset password, invalidate all tokens, and save user', async () => {
       const futureDate = new Date();
       futureDate.setHours(futureDate.getHours() + 1);
       const tokenHashVal = crypto.createHash('sha256').update('valid_token').digest('hex');
 
       const userInstance = mockUserInstance({
-        status: 'PASSWORD_RESET_REQUIRED',
-        isMigrated: true,
         resetTokens: [
           {
             tokenHash: tokenHashVal,
@@ -305,8 +269,6 @@ describe('AuthService - Login', () => {
         message: 'Password has been reset successfully',
       });
       expect(userInstance.password).toBe('new_hashed_password');
-      expect(userInstance.status).toBe('ACTIVE');
-      expect(userInstance.isMigrated).toBe(false);
       expect(userInstance.resetTokens[0].used).toBe(true);
       expect(userInstance.resetTokens[1].used).toBe(true);
       expect(userInstance.save).toHaveBeenCalled();
@@ -427,6 +389,7 @@ describe('AuthService - Login', () => {
       const tokenHashVal = crypto.createHash('sha256').update('123456').digest('hex');
 
       const userInstance = mockUserInstance({
+        status: 'PENDING',
         emailVerifiedAt: null,
         emailVerificationTokens: [
           {
@@ -449,6 +412,7 @@ describe('AuthService - Login', () => {
         message: 'Email verified successfully',
       });
       expect(userInstance.emailVerifiedAt).toBeInstanceOf(Date);
+      expect(userInstance.status).toBe('ACTIVE');
       expect((userInstance.emailVerificationTokens as any)[0].used).toBe(true);
       expect((userInstance.emailVerificationTokens as any)[1].used).toBe(true);
       expect(userInstance.save).toHaveBeenCalled();
